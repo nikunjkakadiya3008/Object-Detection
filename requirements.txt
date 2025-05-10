@@ -1,0 +1,15 @@
+Jinja2
+kiwisolver
+matplotlib
+numpy
+opencv-python
+pandas
+pillow
+pydantic
+pydantic_core
+scipy
+seaborn
+torch
+uvicorn
+websockets
+yolo34py

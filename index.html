@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title> Yolo Live Object Detection </title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      text-align: center;
+    }
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+    }
+    .video-container {
+      position: relative;
+      width: 640px;
+      height: 480px;
+    }
+    #video {
+      width: 640px;
+      height: 480px;
+      background-color: #000;
+      border-radius: 5px;
+    }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 640px;
+      height: 480px;
+      z-index: 10;
+    }
+    #canvas {
+      display: none;
+    }
+    .controls {
+      margin: 15px 0;
+      width: 100%;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      margin: 5px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    .detection-list {
+      max-height: 480px;
+      width: 300px;
+      overflow-y: auto;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      padding: 10px;
+      text-align: left;
+    }
+    .detection-info {
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #eee;
+    }
+    .detection-class {
+      font-weight: bold;
+    }
+    .stats {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #666;
+    }
+    .cropped-objects-container {
+      width: 100%;
+      margin-top: 20px;
+      text-align: center;
+    }
+    .cropped-objects-gallery {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-top: 10px;
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    .cropped-object-item {
+      position: relative;
+      width: 150px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      padding: 5px;
+      background-color: #f9f9f9;
+    }
+    .cropped-object-item img {
+      max-width: 100%;
+      max-height: 120px;
+      display: block;
+      margin: 0 auto;
+      border-radius: 3px;
+    }
+    .cropped-object-info {
+      margin-top: 5px;
+      font-size: 12px;
+      text-align: center;
+    }
+    .save-button {
+      margin-top: 5px;
+      padding: 3px 8px;
+      font-size: 12px;
+      background-color: #007bff;
+    }
+    .download-all-btn {
+      margin-top: 10px;
+      background-color: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <h1>Live Object Detection</h1>
+  <div class="container">
+    <div class="video-container">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="overlay"></canvas>
+      <canvas id="canvas" width="640" height="480"></canvas>
+    </div>
+    <div class="detection-list" id="result">
+      <h3>Detections</h3>
+      <div id="detections-container"></div>
+      <div class="stats" id="stats"></div>
+    </div>
+  </div>
+  <div class="controls">
+    <button id="startBtn">Start Camera</button>
+    <button id="stopBtn" disabled>Stop Detection</button>
+  </div>
+  
+  <div class="cropped-objects-container">
+    <h2>Cropped Objects</h2>
+    <div class="cropped-objects-gallery" id="cropped-objects-gallery"></div>
+    <button class="download-all-btn" id="downloadAllBtn" disabled>Download All Cropped Objects</button>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const overlay = document.getElementById('overlay');
+    const overlayCtx = overlay.getContext('2d');
+    const detectionsContainer = document.getElementById('detections-container');
+    const statsDiv = document.getElementById('stats');
+    const croppedGallery = document.getElementById('cropped-objects-gallery');
+    const downloadAllBtn = document.getElementById('downloadAllBtn');
+    
+    let stream = null;
+    let socket = null;
+    let isRunning = false;
+    let lastFrameTime = 0;
+    let frameCount = 0;
+    let fps = 0;
+    let croppedObjects = {};
+    
+    // Set canvas dimensions
+    function initializeCanvases() {
+      overlay.width = 640;
+      overlay.height = 480;
+      canvas.width = 640;
+      canvas.height = 480;
+    }
+    
+    // Function to draw bounding boxes and labels
+    function drawDetection(detection) {
+      const [x1, y1, x2, y2] = detection.box;
+      const classLabel = detection.class;
+      const confidence = detection.confidence;
+      
+      // Draw bounding box
+      overlayCtx.strokeStyle = '#00ff00';
+      overlayCtx.lineWidth = 3;
+      overlayCtx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      
+      // Draw label background
+      overlayCtx.fillStyle = '#00ff00';
+      overlayCtx.font = '18px Arial';
+      const textWidth = overlayCtx.measureText(classLabel).width;
+      overlayCtx.fillRect(x1, y1 - 25, textWidth + 50, 25);
+      
+      // Draw label text
+      overlayCtx.fillStyle = '#000000';
+      overlayCtx.fillText(`${classLabel} ${Math.round(confidence * 100)}%`, x1 + 5, y1 - 5);
+    }
+    
+    // Function to update detection list
+    function updateDetectionList(detections) {
+      detectionsContainer.innerHTML = '';
+      
+      if (detections.length === 0) {
+        detectionsContainer.innerHTML = '<p>No objects detected</p>';
+        return;
+      }
+      
+      // Group detections by class
+      const classCount = {};
+      
+      for (const detection of detections) {
+        const className = detection.class;
+        if (!classCount[className]) {
+          classCount[className] = 1;
+        } else {
+          classCount[className]++;
+        }
+      }
+      
+      // Create HTML for each class
+      for (const [className, count] of Object.entries(classCount)) {
+        const div = document.createElement('div');
+        div.className = 'detection-info';
+        div.innerHTML = `
+          <div class="detection-class">${className}: ${count}</div>
+        `;
+        detectionsContainer.appendChild(div);
+      }
+    }
+    
+    // Function to update cropped objects gallery
+    function updateCroppedGallery(detections) {
+      // Clear previous content
+      croppedGallery.innerHTML = '';
+      
+      // Store new cropped objects (up to a reasonable limit)
+      const maxStoredObjects = 30; // Limit to prevent memory issues
+      
+      for (const detection of detections) {
+        // Only add new objects if they have cropped images
+        if (detection.cropped_image) {
+          croppedObjects[detection.id] = detection;
+        }
+      }
+      
+      // Limit the number of stored objects
+      const keys = Object.keys(croppedObjects);
+      if (keys.length > maxStoredObjects) {
+        const toRemove = keys.slice(0, keys.length - maxStoredObjects);
+        for (const key of toRemove) {
+          delete croppedObjects[key];
+        }
+      }
+      
+      // Create elements for all stored objects
+      for (const id in croppedObjects) {
+        const detection = croppedObjects[id];
+        
+        if (detection.cropped_image) {
+          const itemDiv = document.createElement('div');
+          itemDiv.className = 'cropped-object-item';
+          itemDiv.innerHTML = `
+            <img src="data:image/jpeg;base64,${detection.cropped_image}" alt="${detection.class}">
+            <div class="cropped-object-info">
+              ${detection.class} (${Math.round(detection.confidence * 100)}%)
+            </div>
+            <button class="save-button">Save</button>
+          `;
+          
+          // Add click handler to save button
+          const saveButton = itemDiv.querySelector('.save-button');
+          saveButton.addEventListener('click', () => {
+            downloadCroppedImage(detection);
+          });
+          
+          croppedGallery.appendChild(itemDiv);
+        }
+      }
+      
+      // Enable download all button if there are cropped objects
+      downloadAllBtn.disabled = Object.keys(croppedObjects).length === 0;
+    }
+    
+    // Function to download a cropped image
+    function downloadCroppedImage(detection) {
+      const link = document.createElement('a');
+      link.href = `data:image/jpeg;base64,${detection.cropped_image}`;
+      link.download = `${detection.class}_${new Date().getTime()}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+    
+    // Function to download all cropped objects
+    function downloadAllCroppedObjects() {
+      for (const id in croppedObjects) {
+        const detection = croppedObjects[id];
+        if (detection.cropped_image) {
+          downloadCroppedImage(detection);
+        }
+      }
+    }
+    
+    // Function to calculate FPS
+    function calculateFPS() {
+      const now = performance.now();
+      frameCount++;
+      
+      if (now - lastFrameTime >= 1000) {
+        fps = frameCount;
+        frameCount = 0;
+        lastFrameTime = now;
+        statsDiv.textContent = `Processing: ${fps} FPS`;
+      }
+    }
+    
+    // Function to start the detection process
+    async function startDetection() {
+      try {
+        // Initialize canvases
+        initializeCanvases();
+        
+        // Get webcam stream
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          } 
+        });
+        video.srcObject = stream;
+        
+        // Create WebSocket connection
+       // socket = new WebSocket(`ws://${window.location.host}/ws`);   //  socket connection in ws
+       
+
+       //  socket connection in wss
+       const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+       socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
+        
+        socket.onopen = () => {
+          console.log('WebSocket connection established');
+          isRunning = true;
+          
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+          
+          // Start processing frames
+          processFrame();
+        };
+        
+        socket.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          
+          // Clear previous detections
+          overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+          
+          // Draw new detections
+          if (data.detections && data.detections.length > 0) {
+            for (const detection of data.detections) {
+              drawDetection(detection);
+            }
+            updateDetectionList(data.detections);
+            updateCroppedGallery(data.detections);
+          } else {
+            updateDetectionList([]);
+          }
+          
+          calculateFPS();
+          
+          // Continue processing if still running
+          if (isRunning) {
+            setTimeout(processFrame, 50); // Add a small delay to prevent flooding
+          }
+        };
+        
+        socket.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          stopDetection();
+          alert('WebSocket connection error. Please try again.');
+        };
+        
+        socket.onclose = () => {
+          console.log('WebSocket connection closed');
+          if (isRunning) {
+            stopDetection();
+          }
+        };
+        
+      } catch (error) {
+        console.error('Error starting webcam:', error);
+        alert('Could not access webcam. Please ensure you have a webcam connected and have granted permission to use it.');
+      }
+    }
+    
+    // Function to process a single video frame
+    function processFrame() {
+      if (!isRunning) return;
+      
+      // Draw current frame to canvas
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Convert canvas to base64 image
+      const imageData = canvas.toDataURL('image/jpeg', 0.7);
+      
+      // Send frame to server for processing
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ image: imageData }));
+      }
+    }
+    
+    // Function to stop detection
+    function stopDetection() {
+      isRunning = false;
+      
+      // Close WebSocket
+      if (socket) {
+        socket.close();
+        socket = null;
+      }
+      
+      // Stop webcam
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+        video.srcObject = null;
+      }
+      
+      // Clear canvas
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      
+      // Reset UI
+      detectionsContainer.innerHTML = '';
+      statsDiv.textContent = '';
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    }
+    
+    // Event listeners
+    startBtn.addEventListener('click', startDetection);
+    stopBtn.addEventListener('click', stopDetection);
+    downloadAllBtn.addEventListener('click', downloadAllCroppedObjects);
+    
+    // Clean up when leaving the page
+    window.addEventListener('beforeunload', stopDetection);
+  </script>
+</body>
+</html>
